@@ -10,11 +10,26 @@ import HomeScreen from './screens/HomeScreen';
 import CalendarScreen from './screens/CalendarScreen';
 import CameraScreen from './screens/CameraScreen';
 import ProfileScreen from './screens/ProfileScreen';
+import NewCropScreen from './screens/NewCropScreen';
 
 const Stack = createNativeStackNavigator();
 const Tab = createBottomTabNavigator();
 
 function TabNavigator({ user }: { user: User }) {
+  const [showNewCrop, setShowNewCrop] = useState(false);
+
+  if (showNewCrop) {
+    return (
+      <NewCropScreen
+        onBack={() => setShowNewCrop(false)}
+        onGenerate={(data) => {
+          console.log('Generate calendar for:', data);
+          setShowNewCrop(false);
+        }}
+      />
+    );
+  }
+
   return (
     <Tab.Navigator
       screenOptions={{
@@ -43,7 +58,7 @@ function TabNavigator({ user }: { user: User }) {
           tabBarIcon: () => <Text>🏠</Text>,
         }}
       >
-        {() => <HomeScreen user={user} />}
+        {() => <HomeScreen user={user} onAddCrop={() => setShowNewCrop(true)} />}
       </Tab.Screen>
       <Tab.Screen
         name="Calendar"

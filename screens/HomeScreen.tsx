@@ -7,9 +7,12 @@ import { useEffect, useState } from 'react';
 import { collection, getDocs, query, where } from 'firebase/firestore';
 import { db } from '../firebaseConfig';
 
-type Props = { user: User };
+type Props = {
+  user: User;
+  onAddCrop: () => void;
+};
 
-export default function HomeScreen({ user }: Props) {
+export default function HomeScreen({ user , onAddCrop}: Props) {
   const [cropCount, setCropCount] = useState(0);
   const [tasksDone, setTasksDone] = useState(0);
 
@@ -92,7 +95,7 @@ export default function HomeScreen({ user }: Props) {
           AI generates a personalized{'\n'}
           20-week farming plan for you
         </Text>
-        <TouchableOpacity style={styles.heroBtn}>
+        <TouchableOpacity style={styles.heroBtn} onPress={onAddCrop}>
           <Text style={styles.heroBtnText}>+ Add New Crop</Text>
         </TouchableOpacity>
       </View>
