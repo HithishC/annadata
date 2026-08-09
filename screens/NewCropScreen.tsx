@@ -80,32 +80,16 @@ export default function NewCropScreen({ onGenerate, onBack }: Props) {
     return true;
   };
 
-  const handleGenerate = async () => {
-    if (!validate()) return;
-    setGenerating(true);
-    try {
-      const response = await fetch('https://annadata-api-mmzk.onrender.com/generate-calendar', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          cropType: selectedCrop,
-          sowingDate: formatDate(sowingDate),
-          location: location.trim(),
-          variety: variety.trim(),
-          language: selectedLanguage,
-        }),
-      });
-      const data = await response.json();
-      if (data.success) {
-        onGenerate(data);
-      } else {
-        Alert.alert('Error', data.detail || 'Failed to generate calendar');
-      }
-    } catch (e) {
-      Alert.alert('Error', 'Could not connect to server. Check your internet connection.');
-    }
-    setGenerating(false);
-  };
+  const handleGenerate = () => {
+  if (!validate()) return;
+  onGenerate({
+    cropType: selectedCrop,
+    sowingDate: formatDate(sowingDate),
+    location: location.trim(),
+    variety: variety.trim(),
+    language: selectedLanguage,
+  });
+};
 
   const isReady = selectedCrop && location.trim();
 
