@@ -1,15 +1,15 @@
 import {
   View, Text, StyleSheet, FlatList,
-  ScrollView, TouchableOpacity, ActivityIndicator, Alert
+  ScrollView, TouchableOpacity, ActivityIndicator, Alert, Animated
 } from 'react-native';
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import {
   collection, query, where, getDocs,
-  orderBy, doc, updateDoc
+  doc, updateDoc
 } from 'firebase/firestore';
 import { db, auth } from '../firebaseConfig';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
-// Task type colors and icons
 const TASK_META: Record<string, { icon: string; color: string; bg: string }> = {
   water:     { icon: '💧', color: '#4fc3f7', bg: 'rgba(79,195,247,0.1)' },
   fertilize: { icon: '🌿', color: '#81c784', bg: 'rgba(129,199,132,0.1)' },
@@ -56,9 +56,31 @@ export default function CalendarScreen() {
   const [loading, setLoading] = useState(true);
   const [loadingWeeks, setLoadingWeeks] = useState(false);
 
+  const progressAnim = useRef(new Animated.Value(0)).current;
   const user = auth.currentUser;
 
-  // Fetch all crops on mount
+  const getTotalProgress = () => {
+    const allTasks = weeks.flatMap(w => w.tasks);
+    const done = allTasks.filter(t => t.completed).length;
+    return {
+      done,
+      total: allTasks.length,
+      pct: allTasks.length > 0 ? Math.round(done / allTasks.length * 100) : 0
+    };
+  };
+
+  const progress = getTotalProgress();
+
+  // Animate progress bar whenever progress changes
+  useEffect(() => {
+    Animated.timing(progressAnim, {
+      toValue: progress.pct,
+      duration: 600,
+      useNativeDriver: false,
+    }).start();
+  }, [progress.pct]);
+
+  // Fetch crops on mount
   useEffect(() => {
     fetchCrops();
   }, []);
@@ -91,32 +113,39 @@ export default function CalendarScreen() {
     setSelectedWeek(0);
     setLoadingWeeks(true);
     try {
-      // Fetch weeks for this crop
+      // Fetch weeks
       const weeksQ = query(
         collection(db, 'calendarWeeks'),
         where('cropId', '==', crop.id)
       );
       const weeksSnap = await getDocs(weeksQ);
-     const weekList: Week[] = weeksSnap.docs.map(d => ({
-  id: d.id,
-  ...(d.data() as Omit<Week, 'id' | 'tasks'>),
-  tasks: [] as Task[],
-}));
+      const weekList: Week[] = weeksSnap.docs.map(d => ({
+        id: d.id,
+        ...(d.data() as Omit<Week, 'id' | 'tasks'>),
+        tasks: [] as Task[],
+      }));
 
-      // Sort weeks by weekNum
       weekList.sort((a, b) => a.weekNum - b.weekNum);
 
-      // Fetch tasks for each week
+      // Fetch tasks for each week with AsyncStorage offline support
       for (const week of weekList) {
         const tasksQ = query(
           collection(db, 'tasks'),
           where('weekId', '==', week.id)
         );
         const tasksSnap = await getDocs(tasksQ);
-        week.tasks = tasksSnap.docs.map(d => ({
-          id: d.id,
-          ...d.data()
-        } as Task));
+
+        week.tasks = await Promise.all(tasksSnap.docs.map(async d => {
+          const task = { id: d.id, ...d.data() } as Task;
+          // Check AsyncStorage for offline completed state
+          try {
+            const cached = await AsyncStorage.getItem(`task_${task.id}`);
+            if (cached !== null) {
+              task.completed = JSON.parse(cached);
+            }
+          } catch (e) {}
+          return task;
+        }));
       }
 
       setWeeks(weekList);
@@ -127,21 +156,36 @@ export default function CalendarScreen() {
   };
 
   const toggleTask = async (task: Task) => {
+    const newCompleted = !task.completed;
+
+    // 1. Update local state immediately (instant UI)
+    setWeeks(prev => prev.map(w => ({
+      ...w,
+      tasks: w.tasks.map(t =>
+        t.id === task.id ? { ...t, completed: newCompleted } : t
+      )
+    })));
+
+    // 2. Save to AsyncStorage for offline
+    try {
+      await AsyncStorage.setItem(
+        `task_${task.id}`,
+        JSON.stringify(newCompleted)
+      );
+    } catch (e) {
+      console.log('AsyncStorage error:', e);
+    }
+
+    // 3. Update Firebase
     try {
       const taskRef = doc(db, 'tasks', task.id);
       await updateDoc(taskRef, {
-        completed: !task.completed,
-        completedAt: !task.completed ? new Date().toISOString() : null,
+        completed: newCompleted,
+        completedAt: newCompleted ? new Date().toISOString() : null,
       });
-      // Update local state
-      setWeeks(prev => prev.map(w => ({
-        ...w,
-        tasks: w.tasks.map(t =>
-          t.id === task.id ? { ...t, completed: !t.completed } : t
-        )
-      })));
     } catch (e) {
-      Alert.alert('Error', 'Could not update task');
+      // Offline — AsyncStorage already saved it
+      console.log('Firebase update failed, saved offline');
     }
   };
 
@@ -152,12 +196,6 @@ export default function CalendarScreen() {
       Cotton: '☁️', Groundnut: '🥜', Ragi: '🌾', Jowar: '🌾',
     };
     return icons[cropType] || '🌱';
-  };
-
-  const getTotalProgress = () => {
-    const allTasks = weeks.flatMap(w => w.tasks);
-    const done = allTasks.filter(t => t.completed).length;
-    return { done, total: allTasks.length, pct: allTasks.length > 0 ? Math.round(done / allTasks.length * 100) : 0 };
   };
 
   const formatDate = (dateStr: string) => {
@@ -190,7 +228,6 @@ export default function CalendarScreen() {
   }
 
   const currentWeekData = weeks[selectedWeek];
-  const progress = getTotalProgress();
 
   return (
     <View style={styles.container}>
@@ -246,10 +283,15 @@ export default function CalendarScreen() {
         </View>
       )}
 
-      {/* ─── PROGRESS BAR ─── */}
+      {/* ─── ANIMATED PROGRESS BAR ─── */}
       <View style={styles.progressBarWrap}>
         <View style={styles.progressTrack}>
-          <View style={[styles.progressFill, { width: `${progress.pct}%` }]} />
+          <Animated.View style={[styles.progressFill, {
+            width: progressAnim.interpolate({
+              inputRange: [0, 100],
+              outputRange: ['0%', '100%'],
+            })
+          }]} />
         </View>
         <Text style={styles.progressLabel}>
           {progress.done}/{progress.total} tasks done
@@ -322,7 +364,6 @@ export default function CalendarScreen() {
                   { borderLeftColor: meta.color },
                   task.completed && styles.taskCardDone,
                 ]}>
-                  {/* Task icon + title */}
                   <View style={styles.taskTop}>
                     <View style={[styles.taskIconWrap, { backgroundColor: meta.bg }]}>
                       <Text style={styles.taskIcon}>{meta.icon}</Text>
@@ -343,7 +384,6 @@ export default function CalendarScreen() {
                     </View>
                   </View>
 
-                  {/* Task footer */}
                   <View style={styles.taskFooter}>
                     <View style={[styles.taskTag, { backgroundColor: meta.bg }]}>
                       <Text style={[styles.taskTagText, { color: meta.color }]}>
@@ -405,8 +445,6 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     lineHeight: 20,
   },
-
-  // Header
   header: {
     paddingTop: 60,
     paddingHorizontal: 20,
@@ -419,8 +457,6 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#eee8d8',
   },
-
-  // Crop selector
   cropScroll: {
     paddingHorizontal: 20,
     paddingVertical: 10,
@@ -444,8 +480,6 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '600',
   },
-
-  // Crop header card
   cropHeader: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -489,8 +523,6 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#f0b84a',
   },
-
-  // Progress bar
   progressBarWrap: {
     paddingHorizontal: 20,
     paddingTop: 10,
@@ -516,8 +548,6 @@ const styles = StyleSheet.create({
     color: '#6a6050',
     fontWeight: '600',
   },
-
-  // Week tabs
   weekScroll: {
     paddingHorizontal: 20,
     paddingVertical: 10,
@@ -550,8 +580,6 @@ const styles = StyleSheet.create({
   weekTabTextActive: {
     color: '#fff',
   },
-
-  // Week header
   weekHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -569,14 +597,10 @@ const styles = StyleSheet.create({
     color: '#4a4030',
     fontFamily: 'monospace',
   },
-
-  // Task list
   taskList: {
     paddingHorizontal: 20,
     paddingBottom: 100,
   },
-
-  // Task card
   taskCard: {
     backgroundColor: '#111a14',
     borderRadius: 14,
@@ -626,8 +650,6 @@ const styles = StyleSheet.create({
     marginTop: 6,
     fontStyle: 'italic',
   },
-
-  // Task footer
   taskFooter: {
     flexDirection: 'row',
     justifyContent: 'space-between',
