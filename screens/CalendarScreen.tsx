@@ -55,9 +55,25 @@ export default function CalendarScreen() {
   const [selectedWeek, setSelectedWeek] = useState(0);
   const [loading, setLoading] = useState(true);
   const [loadingWeeks, setLoadingWeeks] = useState(false);
+  const [isOnline, setIsOnline] = useState(true);
 
   const progressAnim = useRef(new Animated.Value(0)).current;
   const user = auth.currentUser;
+
+  // Network detection — inside component
+  useEffect(() => {
+    const checkNet = async () => {
+      try {
+        const r = await fetch('https://www.google.com', { method: 'HEAD' });
+        setIsOnline(r.ok);
+      } catch {
+        setIsOnline(false);
+      }
+    };
+    checkNet();
+    const interval = setInterval(checkNet, 10000);
+    return () => clearInterval(interval);
+  }, []);
 
   const getTotalProgress = () => {
     const allTasks = weeks.flatMap(w => w.tasks);
@@ -71,7 +87,6 @@ export default function CalendarScreen() {
 
   const progress = getTotalProgress();
 
-  // Animate progress bar whenever progress changes
   useEffect(() => {
     Animated.timing(progressAnim, {
       toValue: progress.pct,
@@ -80,7 +95,6 @@ export default function CalendarScreen() {
     }).start();
   }, [progress.pct]);
 
-  // Fetch crops on mount
   useEffect(() => {
     fetchCrops();
   }, []);
@@ -112,8 +126,19 @@ export default function CalendarScreen() {
     setSelectedCrop(crop);
     setSelectedWeek(0);
     setLoadingWeeks(true);
+
     try {
-      // Fetch weeks
+      // If offline — load from AsyncStorage cache
+      if (!isOnline) {
+        const cached = await AsyncStorage.getItem(`calendar_${crop.id}`);
+        if (cached) {
+          setWeeks(JSON.parse(cached));
+          setLoadingWeeks(false);
+          return;
+        }
+      }
+
+      // Online — fetch from Firestore
       const weeksQ = query(
         collection(db, 'calendarWeeks'),
         where('cropId', '==', crop.id)
@@ -127,7 +152,6 @@ export default function CalendarScreen() {
 
       weekList.sort((a, b) => a.weekNum - b.weekNum);
 
-      // Fetch tasks for each week with AsyncStorage offline support
       for (const week of weekList) {
         const tasksQ = query(
           collection(db, 'tasks'),
@@ -137,7 +161,6 @@ export default function CalendarScreen() {
 
         week.tasks = await Promise.all(tasksSnap.docs.map(async d => {
           const task = { id: d.id, ...d.data() } as Task;
-          // Check AsyncStorage for offline completed state
           try {
             const cached = await AsyncStorage.getItem(`task_${task.id}`);
             if (cached !== null) {
@@ -148,17 +171,29 @@ export default function CalendarScreen() {
         }));
       }
 
+      // Save to cache
+      try {
+        await AsyncStorage.setItem(
+          `calendar_${crop.id}`,
+          JSON.stringify(weekList)
+        );
+      } catch (e) {}
+
       setWeeks(weekList);
     } catch (e) {
       console.log('Error fetching weeks:', e);
+      try {
+        const cached = await AsyncStorage.getItem(`calendar_${crop.id}`);
+        if (cached) setWeeks(JSON.parse(cached));
+      } catch (err) {}
     }
+
     setLoadingWeeks(false);
   };
 
   const toggleTask = async (task: Task) => {
     const newCompleted = !task.completed;
 
-    // 1. Update local state immediately (instant UI)
     setWeeks(prev => prev.map(w => ({
       ...w,
       tasks: w.tasks.map(t =>
@@ -166,17 +201,13 @@ export default function CalendarScreen() {
       )
     })));
 
-    // 2. Save to AsyncStorage for offline
     try {
       await AsyncStorage.setItem(
         `task_${task.id}`,
         JSON.stringify(newCompleted)
       );
-    } catch (e) {
-      console.log('AsyncStorage error:', e);
-    }
+    } catch (e) {}
 
-    // 3. Update Firebase
     try {
       const taskRef = doc(db, 'tasks', task.id);
       await updateDoc(taskRef, {
@@ -184,7 +215,6 @@ export default function CalendarScreen() {
         completedAt: newCompleted ? new Date().toISOString() : null,
       });
     } catch (e) {
-      // Offline — AsyncStorage already saved it
       console.log('Firebase update failed, saved offline');
     }
   };
@@ -204,7 +234,6 @@ export default function CalendarScreen() {
     return d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short' });
   };
 
-  // ─── LOADING STATE ───
   if (loading) {
     return (
       <View style={styles.centered}>
@@ -214,7 +243,6 @@ export default function CalendarScreen() {
     );
   }
 
-  // ─── EMPTY STATE ───
   if (crops.length === 0) {
     return (
       <View style={styles.centered}>
@@ -232,12 +260,17 @@ export default function CalendarScreen() {
   return (
     <View style={styles.container}>
 
-      {/* ─── HEADER ─── */}
+      {/* HEADER */}
       <View style={styles.header}>
         <Text style={styles.headerTitle}>📅 My Calendars</Text>
+        {!isOnline && (
+          <View style={styles.offlineBadge}>
+            <Text style={styles.offlineText}>📵 Offline</Text>
+          </View>
+        )}
       </View>
 
-      {/* ─── CROP SELECTOR ─── */}
+      {/* CROP SELECTOR */}
       {crops.length > 1 && (
         <ScrollView
           horizontal
@@ -261,7 +294,7 @@ export default function CalendarScreen() {
         </ScrollView>
       )}
 
-      {/* ─── CROP HEADER CARD ─── */}
+      {/* CROP HEADER CARD */}
       {selectedCrop && (
         <View style={styles.cropHeader}>
           <View style={styles.cropHeaderLeft}>
@@ -283,7 +316,7 @@ export default function CalendarScreen() {
         </View>
       )}
 
-      {/* ─── ANIMATED PROGRESS BAR ─── */}
+      {/* ANIMATED PROGRESS BAR */}
       <View style={styles.progressBarWrap}>
         <View style={styles.progressTrack}>
           <Animated.View style={[styles.progressFill, {
@@ -298,7 +331,7 @@ export default function CalendarScreen() {
         </Text>
       </View>
 
-      {/* ─── WEEK SELECTOR ─── */}
+      {/* WEEK SELECTOR */}
       {loadingWeeks ? (
         <ActivityIndicator color="#f0b84a" style={{ marginTop: 20 }} />
       ) : (
@@ -332,7 +365,6 @@ export default function CalendarScreen() {
             })}
           </ScrollView>
 
-          {/* ─── WEEK HEADER ─── */}
           {currentWeekData && (
             <View style={styles.weekHeader}>
               <Text style={styles.weekHeaderTitle}>
@@ -345,7 +377,6 @@ export default function CalendarScreen() {
             </View>
           )}
 
-          {/* ─── TASK CARDS ─── */}
           <FlatList
             data={currentWeekData?.tasks || []}
             keyExtractor={item => item.id}
@@ -416,275 +447,108 @@ export default function CalendarScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#080f09',
-  },
+  container: { flex: 1, backgroundColor: '#080f09' },
   centered: {
-    flex: 1,
-    backgroundColor: '#080f09',
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: 24,
+    flex: 1, backgroundColor: '#080f09',
+    alignItems: 'center', justifyContent: 'center', padding: 24,
   },
-  loadingText: {
-    color: '#6a6050',
-    marginTop: 12,
-    fontSize: 14,
-  },
+  loadingText: { color: '#6a6050', marginTop: 12, fontSize: 14 },
   emptyIcon: { fontSize: 48, marginBottom: 16 },
-  emptyTitle: {
-    fontSize: 20,
-    fontWeight: '700',
-    color: '#eee8d8',
-    marginBottom: 8,
-  },
-  emptySub: {
-    fontSize: 13,
-    color: '#4a4030',
-    textAlign: 'center',
-    lineHeight: 20,
-  },
+  emptyTitle: { fontSize: 20, fontWeight: '700', color: '#eee8d8', marginBottom: 8 },
+  emptySub: { fontSize: 13, color: '#4a4030', textAlign: 'center', lineHeight: 20 },
   header: {
-    paddingTop: 60,
-    paddingHorizontal: 20,
-    paddingBottom: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: 'rgba(255,255,255,0.05)',
+    paddingTop: 60, paddingHorizontal: 20, paddingBottom: 12,
+    borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.05)',
+    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
   },
-  headerTitle: {
-    fontSize: 20,
-    fontWeight: '700',
-    color: '#eee8d8',
+  headerTitle: { fontSize: 20, fontWeight: '700', color: '#eee8d8' },
+  offlineBadge: {
+    backgroundColor: 'rgba(192,57,43,0.15)',
+    borderWidth: 1, borderColor: 'rgba(192,57,43,0.4)',
+    borderRadius: 20, paddingHorizontal: 10, paddingVertical: 4,
   },
-  cropScroll: {
-    paddingHorizontal: 20,
-    paddingVertical: 10,
-    maxHeight: 56,
-  },
+  offlineText: { fontSize: 11, fontWeight: '700', color: '#e57373' },
+  cropScroll: { paddingHorizontal: 20, paddingVertical: 10, maxHeight: 56 },
   cropChip: {
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderRadius: 20,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.08)',
-    backgroundColor: 'rgba(255,255,255,0.03)',
-    marginRight: 8,
+    paddingHorizontal: 14, paddingVertical: 8, borderRadius: 20,
+    borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)',
+    backgroundColor: 'rgba(255,255,255,0.03)', marginRight: 8,
   },
-  cropChipActive: {
-    backgroundColor: '#2d7a4a',
-    borderColor: '#2d7a4a',
-  },
-  cropChipText: {
-    color: '#b0a080',
-    fontSize: 13,
-    fontWeight: '600',
-  },
+  cropChipActive: { backgroundColor: '#2d7a4a', borderColor: '#2d7a4a' },
+  cropChipText: { color: '#b0a080', fontSize: 13, fontWeight: '600' },
   cropHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginHorizontal: 20,
-    marginTop: 12,
-    backgroundColor: '#111a14',
-    borderRadius: 14,
-    padding: 14,
-    borderWidth: 1,
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    marginHorizontal: 20, marginTop: 12, backgroundColor: '#111a14',
+    borderRadius: 14, padding: 14, borderWidth: 1,
     borderColor: 'rgba(212,168,67,0.15)',
   },
-  cropHeaderLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-  },
+  cropHeaderLeft: { flexDirection: 'row', alignItems: 'center', gap: 12 },
   cropHeaderIcon: { fontSize: 32 },
-  cropHeaderName: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: '#eee8d8',
-    marginBottom: 2,
-  },
-  cropHeaderMeta: {
-    fontSize: 11,
-    color: '#6a6050',
-  },
+  cropHeaderName: { fontSize: 16, fontWeight: '700', color: '#eee8d8', marginBottom: 2 },
+  cropHeaderMeta: { fontSize: 11, color: '#6a6050' },
   progressCircle: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
+    width: 48, height: 48, borderRadius: 24,
     backgroundColor: 'rgba(212,168,67,0.1)',
-    borderWidth: 2,
-    borderColor: '#f0b84a',
-    alignItems: 'center',
-    justifyContent: 'center',
+    borderWidth: 2, borderColor: '#f0b84a',
+    alignItems: 'center', justifyContent: 'center',
   },
-  progressPct: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: '#f0b84a',
-  },
+  progressPct: { fontSize: 12, fontWeight: '700', color: '#f0b84a' },
   progressBarWrap: {
-    paddingHorizontal: 20,
-    paddingTop: 10,
-    paddingBottom: 4,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
+    paddingHorizontal: 20, paddingTop: 10, paddingBottom: 4,
+    flexDirection: 'row', alignItems: 'center', gap: 10,
   },
   progressTrack: {
-    flex: 1,
-    height: 6,
-    backgroundColor: 'rgba(255,255,255,0.06)',
-    borderRadius: 6,
-    overflow: 'hidden',
+    flex: 1, height: 6, backgroundColor: 'rgba(255,255,255,0.06)',
+    borderRadius: 6, overflow: 'hidden',
   },
-  progressFill: {
-    height: '100%',
-    backgroundColor: '#2d7a4a',
-    borderRadius: 6,
-  },
-  progressLabel: {
-    fontSize: 10,
-    color: '#6a6050',
-    fontWeight: '600',
-  },
-  weekScroll: {
-    paddingHorizontal: 20,
-    paddingVertical: 10,
-    maxHeight: 56,
-  },
+  progressFill: { height: '100%', backgroundColor: '#2d7a4a', borderRadius: 6 },
+  progressLabel: { fontSize: 10, color: '#6a6050', fontWeight: '600' },
+  weekScroll: { paddingHorizontal: 20, paddingVertical: 10, maxHeight: 56 },
   weekTab: {
-    width: 40,
-    height: 36,
-    borderRadius: 10,
+    width: 40, height: 36, borderRadius: 10,
     backgroundColor: 'rgba(255,255,255,0.04)',
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.08)',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: 6,
+    borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)',
+    alignItems: 'center', justifyContent: 'center', marginRight: 6,
   },
-  weekTabActive: {
-    backgroundColor: '#2d7a4a',
-    borderColor: '#2d7a4a',
-  },
-  weekTabDone: {
-    borderColor: '#f0b84a',
-    backgroundColor: 'rgba(212,168,67,0.1)',
-  },
-  weekTabText: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: '#4a4030',
-  },
-  weekTabTextActive: {
-    color: '#fff',
-  },
+  weekTabActive: { backgroundColor: '#2d7a4a', borderColor: '#2d7a4a' },
+  weekTabDone: { borderColor: '#f0b84a', backgroundColor: 'rgba(212,168,67,0.1)' },
+  weekTabText: { fontSize: 11, fontWeight: '700', color: '#4a4030' },
+  weekTabTextActive: { color: '#fff' },
   weekHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: 20,
-    paddingBottom: 8,
+    flexDirection: 'row', justifyContent: 'space-between',
+    alignItems: 'center', paddingHorizontal: 20, paddingBottom: 8,
   },
-  weekHeaderTitle: {
-    fontSize: 15,
-    fontWeight: '700',
-    color: '#b0a080',
-  },
-  weekHeaderDates: {
-    fontSize: 11,
-    color: '#4a4030',
-    fontFamily: 'monospace',
-  },
-  taskList: {
-    paddingHorizontal: 20,
-    paddingBottom: 100,
-  },
+  weekHeaderTitle: { fontSize: 15, fontWeight: '700', color: '#b0a080' },
+  weekHeaderDates: { fontSize: 11, color: '#4a4030', fontFamily: 'monospace' },
+  taskList: { paddingHorizontal: 20, paddingBottom: 100 },
   taskCard: {
-    backgroundColor: '#111a14',
-    borderRadius: 14,
-    padding: 16,
-    marginBottom: 10,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.06)',
-    borderLeftWidth: 3,
+    backgroundColor: '#111a14', borderRadius: 14, padding: 16,
+    marginBottom: 10, borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.06)', borderLeftWidth: 3,
   },
-  taskCardDone: {
-    opacity: 0.5,
-  },
-  taskTop: {
-    flexDirection: 'row',
-    gap: 12,
-    marginBottom: 12,
-  },
+  taskCardDone: { opacity: 0.5 },
+  taskTop: { flexDirection: 'row', gap: 12, marginBottom: 12 },
   taskIconWrap: {
-    width: 36,
-    height: 36,
-    borderRadius: 10,
-    alignItems: 'center',
-    justifyContent: 'center',
-    flexShrink: 0,
+    width: 36, height: 36, borderRadius: 10,
+    alignItems: 'center', justifyContent: 'center', flexShrink: 0,
   },
   taskIcon: { fontSize: 18 },
   taskBody: { flex: 1 },
-  taskTitle: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#eee8d8',
-    marginBottom: 4,
-    lineHeight: 20,
-  },
-  taskTitleDone: {
-    textDecorationLine: 'line-through',
-    color: '#4a4030',
-  },
-  taskDesc: {
-    fontSize: 12,
-    color: '#6a6050',
-    lineHeight: 18,
-  },
-  taskTranslated: {
-    fontSize: 12,
-    color: '#8a7a60',
-    marginTop: 6,
-    fontStyle: 'italic',
-  },
+  taskTitle: { fontSize: 14, fontWeight: '600', color: '#eee8d8', marginBottom: 4, lineHeight: 20 },
+  taskTitleDone: { textDecorationLine: 'line-through', color: '#4a4030' },
+  taskDesc: { fontSize: 12, color: '#6a6050', lineHeight: 18 },
+  taskTranslated: { fontSize: 12, color: '#8a7a60', marginTop: 6, fontStyle: 'italic' },
   taskFooter: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    borderTopWidth: 1,
-    borderTopColor: 'rgba(255,255,255,0.04)',
-    paddingTop: 10,
+    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
+    borderTopWidth: 1, borderTopColor: 'rgba(255,255,255,0.04)', paddingTop: 10,
   },
-  taskTag: {
-    paddingHorizontal: 10,
-    paddingVertical: 3,
-    borderRadius: 6,
-  },
-  taskTagText: {
-    fontSize: 9,
-    fontWeight: '700',
-    letterSpacing: 1,
-  },
+  taskTag: { paddingHorizontal: 10, paddingVertical: 3, borderRadius: 6 },
+  taskTagText: { fontSize: 9, fontWeight: '700', letterSpacing: 1 },
   doneBtn: {
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.1)',
-    borderRadius: 8,
-    paddingHorizontal: 14,
-    paddingVertical: 6,
+    borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)',
+    borderRadius: 8, paddingHorizontal: 14, paddingVertical: 6,
   },
-  doneBtnActive: {
-    backgroundColor: '#2d7a4a',
-    borderColor: '#2d7a4a',
-  },
-  doneBtnText: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: '#6a6050',
-  },
-  doneBtnTextActive: {
-    color: '#fff',
-  },
+  doneBtnActive: { backgroundColor: '#2d7a4a', borderColor: '#2d7a4a' },
+  doneBtnText: { fontSize: 12, fontWeight: '600', color: '#6a6050' },
+  doneBtnTextActive: { color: '#fff' },
 });
