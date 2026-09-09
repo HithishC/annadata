@@ -14,6 +14,8 @@ import ProfileScreen from './screens/ProfileScreen';
 import NewCropScreen from './screens/NewCropScreen';
 import LoadingScreen from './screens/LoadingScreen';
 import { generateCalendar, CropRequest } from './api/calendar';
+import { registerForPushNotifications, scheduleLocalNotif } from './hooks/useNotifications';
+import * as Notifications from 'expo-notifications';
 
 const Stack = createNativeStackNavigator();
 const Tab = createBottomTabNavigator();
@@ -32,10 +34,7 @@ function TabNavigator({ user }: { user: User }) {
   const isCallingAPI = useRef(false);
 
   const handleGenerate = async (data: CropRequest) => {
-    if (isCallingAPI.current) {
-      console.log('⚠️ Already generating, skipping...');
-      return;
-    }
+    if (isCallingAPI.current) return;
     isCallingAPI.current = true;
 
     console.log('🌾 handleGenerate called with:', JSON.stringify(data));
@@ -43,12 +42,10 @@ function TabNavigator({ user }: { user: User }) {
     setIsGenerating(true);
 
     try {
-      // 1. Call FastAPI → Groq AI
       console.log('🤖 Calling Groq AI...');
       const calendar = await generateCalendar(data);
       console.log('✅ Calendar received, weeks:', calendar.length);
 
-      // 2. Save crop to Firestore
       console.log('💾 Saving crop to Firestore...');
       const cropRef = await addDoc(collection(db, 'crops'), {
         userId: user.uid,
@@ -62,7 +59,6 @@ function TabNavigator({ user }: { user: User }) {
       });
       console.log('✅ Crop saved, id:', cropRef.id);
 
-      // 3. Save each week + tasks to Firestore
       console.log('💾 Saving weeks and tasks...');
       for (const week of calendar) {
         const weekRef = await addDoc(collection(db, 'calendarWeeks'), {
@@ -89,6 +85,19 @@ function TabNavigator({ user }: { user: User }) {
       }
 
       console.log('✅ All weeks and tasks saved!');
+
+      // Schedule notification for first task
+      try {
+        const firstTask = calendar[0]?.tasks[0];
+        if (firstTask) {
+          await scheduleLocalNotif(
+            '🌾 Annadata — Calendar Ready!',
+            `Your ${data.cropType} calendar is ready. Week 1: ${firstTask.title}`,
+            5
+          );
+        }
+      } catch (e) {}
+
       setIsGenerating(false);
       isCallingAPI.current = false;
       showToast('✅ Calendar generated successfully!');
@@ -96,12 +105,13 @@ function TabNavigator({ user }: { user: User }) {
     } catch (error: any) {
       console.log('❌ Error type:', error?.code);
       console.log('❌ Error message:', error?.message);
-      console.log('❌ Full error:', JSON.stringify(error));
       setIsGenerating(false);
       isCallingAPI.current = false;
       Alert.alert(
         'Error',
-        error?.message || 'Something went wrong. Please try again.'
+        error?.message?.includes('timeout')
+          ? 'AI is taking too long. Please try again.'
+          : error?.message || 'Something went wrong. Please try again.'
       );
     }
   };
@@ -179,12 +189,36 @@ export default function App() {
   const [user, setUser] = useState<User | null>(null);
   const [initializing, setInitializing] = useState(true);
 
+  // Auth listener
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, (firebaseUser) => {
       setUser(firebaseUser);
       if (initializing) setInitializing(false);
     });
     return unsub;
+  }, []);
+
+  // Setup notifications on first open
+  useEffect(() => {
+    const setupNotifications = async () => {
+      const granted = await registerForPushNotifications();
+      if (granted) {
+        await scheduleLocalNotif(
+          '🌾 Annadata Test',
+          'Notifications are working! Your daily farm reminders are set.',
+          60
+        );
+      }
+    };
+    setupNotifications();
+  }, []);
+
+  // Notification listener — handle taps
+  useEffect(() => {
+    const sub = Notifications.addNotificationResponseReceivedListener(response => {
+      console.log('Notification tapped:', response.notification.request.content.title);
+    });
+    return () => sub.remove();
   }, []);
 
   if (initializing) {
