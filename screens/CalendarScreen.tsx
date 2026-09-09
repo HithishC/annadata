@@ -1,3 +1,4 @@
+import { scheduleDailyReminder } from '../hooks/useNotifications';
 import {
   View, Text, StyleSheet, FlatList,
   ScrollView, TouchableOpacity, ActivityIndicator, Alert, Animated
@@ -216,6 +217,19 @@ export default function CalendarScreen() {
       });
     } catch (e) {
       console.log('Firebase update failed, saved offline');
+    }
+    // Reschedule daily reminder with next task
+    try {
+      if (selectedCrop) {
+        await scheduleDailyReminder(
+          weeks,
+          selectedCrop.sowingDate,
+          selectedCrop.cropType,
+          selectedCrop.language
+        );
+      }
+    } catch (e) {
+      console.log('Notification reschedule error:', e);
     }
   };
 
