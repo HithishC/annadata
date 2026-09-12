@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef } from 'react';
-import { ActivityIndicator, View, Text, ToastAndroid, Alert, Platform } from 'react-native';
+import { ActivityIndicator, View, Text, ToastAndroid, Alert, Platform, TouchableOpacity } from 'react-native';
 import { onAuthStateChanged, User } from 'firebase/auth';
 import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
@@ -155,7 +155,33 @@ function TabNavigator({ user }: { user: User }) {
           tabBarIcon: () => <Text>🏠</Text>,
         }}
       >
-        {() => <HomeScreen user={user} onAddCrop={() => setShowNewCrop(true)} />}
+        {() => (
+          <View style={{ flex: 1 }}>
+            <HomeScreen user={user} onAddCrop={() => setShowNewCrop(true)} />
+            {/* FAB Button */}
+            <TouchableOpacity
+              style={{
+                position: 'absolute',
+                bottom: 80,
+                right: 20,
+                width: 56,
+                height: 56,
+                borderRadius: 28,
+                backgroundColor: '#2d7a4a',
+                alignItems: 'center',
+                justifyContent: 'center',
+                shadowColor: '#000',
+                shadowOffset: { width: 0, height: 4 },
+                shadowOpacity: 0.3,
+                shadowRadius: 8,
+                elevation: 8,
+              }}
+              onPress={() => setShowNewCrop(true)}
+            >
+              <Text style={{ fontSize: 28, color: '#fff', lineHeight: 32 }}>+</Text>
+            </TouchableOpacity>
+          </View>
+        )}
       </Tab.Screen>
       <Tab.Screen
         name="Calendar"
