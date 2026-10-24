@@ -1,13 +1,11 @@
 import {
   View, Text, StyleSheet, TouchableOpacity,
-  Alert, Switch, ScrollView
+  Alert, ScrollView
 } from 'react-native';
 import { signOut } from 'firebase/auth';
 import { auth, db } from '../firebaseConfig';
 import { useState, useEffect } from 'react';
 import { collection, query, where, getDocs } from 'firebase/firestore';
-import * as Notifications from 'expo-notifications';
-import { registerForPushNotifications } from '../hooks/useNotifications';
 
 const LANGUAGES = [
   { code: 'en', label: 'English' },
@@ -23,21 +21,14 @@ const LANGUAGES = [
 
 export default function ProfileScreen() {
   const user = auth.currentUser;
-  const [notifEnabled, setNotifEnabled] = useState(true);
   const [cropCount, setCropCount] = useState(0);
   const [tasksDone, setTasksDone] = useState(0);
   const [selectedLang, setSelectedLang] = useState('en');
   const [showLangPicker, setShowLangPicker] = useState(false);
 
   useEffect(() => {
-    checkNotifPermission();
     fetchStats();
   }, []);
-
-  const checkNotifPermission = async () => {
-    const { status } = await Notifications.getPermissionsAsync();
-    setNotifEnabled(status === 'granted');
-  };
 
   const fetchStats = async () => {
     if (!user) return;
@@ -49,13 +40,6 @@ export default function ProfileScreen() {
       const snap = await getDocs(q);
       setCropCount(snap.size);
 
-      let done = 0;
-      snap.forEach(doc => {
-        const data = doc.data();
-        if (data.tasksDone) done += data.tasksDone;
-      });
-
-      // Count completed tasks
       const tasksQ = query(
         collection(db, 'tasks'),
         where('userId', '==', user.uid),
@@ -68,22 +52,8 @@ export default function ProfileScreen() {
     }
   };
 
-  const toggleNotifications = async (value: boolean) => {
-    if (value) {
-      const granted = await registerForPushNotifications();
-      setNotifEnabled(granted);
-      if (granted) {
-        Alert.alert('✅ Enabled', 'You will get daily 6 AM farm reminders');
-      }
-    } else {
-      await Notifications.cancelAllScheduledNotificationsAsync();
-      setNotifEnabled(false);
-      Alert.alert('🔕 Disabled', 'You can re-enable anytime from Profile');
-    }
-  };
-
   const handleLogout = () => {
-    Alert.alert('Logout', 'Are you sure you want to logout?', [
+    Alert.alert('Logout', 'Are you sure?', [
       { text: 'Cancel', style: 'cancel' },
       { text: 'Logout', style: 'destructive', onPress: () => signOut(auth) },
     ]);
@@ -130,24 +100,6 @@ export default function ProfileScreen() {
       <Text style={styles.sectionTitle}>⚙️ Settings</Text>
       <View style={styles.settingsCard}>
 
-        {/* Notification toggle */}
-        <View style={styles.settingRow}>
-          <View style={styles.settingInfo}>
-            <Text style={styles.settingTitle}>🔔 Daily 6 AM Reminders</Text>
-            <Text style={styles.settingDesc}>
-              Get today's farm task every morning
-            </Text>
-          </View>
-          <Switch
-            value={notifEnabled}
-            onValueChange={toggleNotifications}
-            trackColor={{ false: '#2a2018', true: '#2d7a4a' }}
-            thumbColor={notifEnabled ? '#3db870' : '#6a6050'}
-          />
-        </View>
-
-        <View style={styles.divider} />
-
         {/* Language picker */}
         <TouchableOpacity
           style={styles.settingRow}
@@ -162,7 +114,6 @@ export default function ProfileScreen() {
           <Text style={styles.chevron}>{showLangPicker ? '▲' : '▼'}</Text>
         </TouchableOpacity>
 
-        {/* Language options */}
         {showLangPicker && (
           <View style={styles.langGrid}>
             {LANGUAGES.map(lang => (
@@ -208,7 +159,6 @@ export default function ProfileScreen() {
       </TouchableOpacity>
 
       <Text style={styles.footer}>Made with ❤️ for Indian Farmers</Text>
-
       <View style={{ height: 100 }} />
     </ScrollView>
   );
@@ -235,50 +185,35 @@ const styles = StyleSheet.create({
   name: { fontSize: 22, fontWeight: '700', color: '#eee8d8', marginBottom: 4 },
   email: { fontSize: 13, color: '#8a7a60', marginBottom: 4 },
   uid: { fontSize: 10, color: '#4a4030', fontFamily: 'monospace' },
-
-  // Stats
   statsRow: {
     flexDirection: 'row',
     gap: 10,
     marginBottom: 24,
   },
   statCard: {
-    flex: 1,
-    backgroundColor: '#111a14',
-    borderRadius: 14,
-    padding: 14,
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.05)',
+    flex: 1, backgroundColor: '#111a14',
+    borderRadius: 14, padding: 14, alignItems: 'center',
+    borderWidth: 1, borderColor: 'rgba(255,255,255,0.05)',
   },
   statNum: { fontSize: 24, fontWeight: '700', color: '#f0b84a', marginBottom: 4 },
   statLabel: {
     fontSize: 10, color: '#6a6050',
     textAlign: 'center', lineHeight: 14,
   },
-
   sectionTitle: {
     fontSize: 12, fontWeight: '700',
     color: '#6a6050', letterSpacing: 1,
-    textTransform: 'uppercase',
-    marginBottom: 10,
+    textTransform: 'uppercase', marginBottom: 10,
   },
-
-  // Settings card
   settingsCard: {
-    backgroundColor: '#111a14',
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.06)',
-    marginBottom: 20,
-    overflow: 'hidden',
+    backgroundColor: '#111a14', borderRadius: 16,
+    borderWidth: 1, borderColor: 'rgba(255,255,255,0.06)',
+    marginBottom: 20, overflow: 'hidden',
   },
   settingRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
+    flexDirection: 'row', alignItems: 'center',
     justifyContent: 'space-between',
-    padding: 16,
-    gap: 12,
+    padding: 16, gap: 12,
   },
   settingInfo: { flex: 1 },
   settingTitle: {
@@ -292,35 +227,27 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(255,255,255,0.05)',
     marginHorizontal: 16,
   },
-
-  // Language grid
   langGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
-    padding: 16,
-    paddingTop: 0,
+    flexDirection: 'row', flexWrap: 'wrap',
+    gap: 8, padding: 16, paddingTop: 0,
   },
   langChip: {
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 20,
-    borderWidth: 1,
+    paddingHorizontal: 12, paddingVertical: 6,
+    borderRadius: 20, borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.08)',
     backgroundColor: 'rgba(255,255,255,0.03)',
   },
-  langChipActive: {
-    backgroundColor: '#2d7a4a',
-    borderColor: '#2d7a4a',
-  },
+  langChipActive: { backgroundColor: '#2d7a4a', borderColor: '#2d7a4a' },
   langChipText: { color: '#6a6050', fontSize: 13, fontWeight: '600' },
   langChipTextActive: { color: '#fff' },
-
   logoutBtn: {
     borderWidth: 1, borderColor: '#c0392b',
     paddingVertical: 14, borderRadius: 50,
     alignItems: 'center', marginBottom: 16,
   },
   logoutText: { color: '#e57373', fontWeight: '700', fontSize: 15 },
-  footer: { textAlign: 'center', fontSize: 11, color: '#2a2018', marginBottom: 8 },
+  footer: {
+    textAlign: 'center', fontSize: 11,
+    color: '#2a2018', marginBottom: 8,
+  },
 });

@@ -1,5 +1,6 @@
 import { useEffect, useState, useRef } from 'react';
-import { ActivityIndicator, View, Text, ToastAndroid, Alert, Platform, TouchableOpacity } from 'react-native';
+import type { ComponentType } from 'react';
+import { ActivityIndicator, View, Text, ToastAndroid, Alert, Platform } from 'react-native';
 import { onAuthStateChanged, User } from 'firebase/auth';
 import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
@@ -14,8 +15,6 @@ import ProfileScreen from './screens/ProfileScreen';
 import NewCropScreen from './screens/NewCropScreen';
 import LoadingScreen from './screens/LoadingScreen';
 import { generateCalendar, CropRequest } from './api/calendar';
-import { registerForPushNotifications, scheduleLocalNotif } from './hooks/useNotifications';
-import * as Notifications from 'expo-notifications';
 
 const Stack = createNativeStackNavigator();
 const Tab = createBottomTabNavigator();
@@ -84,34 +83,20 @@ function TabNavigator({ user }: { user: User }) {
         }
       }
 
-      console.log('✅ All weeks and tasks saved!');
-
-      // Schedule notification for first task
-      try {
-        const firstTask = calendar[0]?.tasks[0];
-        if (firstTask) {
-          await scheduleLocalNotif(
-            '🌾 Annadata — Calendar Ready!',
-            `Your ${data.cropType} calendar is ready. Week 1: ${firstTask.title}`,
-            5
-          );
-        }
-      } catch (e) {}
-
+      console.log('✅ All saved!');
       setIsGenerating(false);
       isCallingAPI.current = false;
       showToast('✅ Calendar generated successfully!');
 
     } catch (error: any) {
-      console.log('❌ Error type:', error?.code);
-      console.log('❌ Error message:', error?.message);
+      console.log('❌ Error:', error?.message);
       setIsGenerating(false);
       isCallingAPI.current = false;
       Alert.alert(
         'Error',
         error?.message?.includes('timeout')
           ? 'AI is taking too long. Please try again.'
-          : error?.message || 'Something went wrong. Please try again.'
+          : error?.message || 'Something went wrong.'
       );
     }
   };
@@ -129,6 +114,7 @@ function TabNavigator({ user }: { user: User }) {
 
   return (
     <Tab.Navigator
+      id={undefined}
       screenOptions={{
         headerShown: false,
         tabBarStyle: {
@@ -158,8 +144,7 @@ function TabNavigator({ user }: { user: User }) {
         {() => (
           <View style={{ flex: 1 }}>
             <HomeScreen user={user} onAddCrop={() => setShowNewCrop(true)} />
-            {/* FAB Button */}
-            <TouchableOpacity
+            <View
               style={{
                 position: 'absolute',
                 bottom: 80,
@@ -170,22 +155,20 @@ function TabNavigator({ user }: { user: User }) {
                 backgroundColor: '#2d7a4a',
                 alignItems: 'center',
                 justifyContent: 'center',
-                shadowColor: '#000',
-                shadowOffset: { width: 0, height: 4 },
-                shadowOpacity: 0.3,
-                shadowRadius: 8,
                 elevation: 8,
               }}
-              onPress={() => setShowNewCrop(true)}
             >
-              <Text style={{ fontSize: 28, color: '#fff', lineHeight: 32 }}>+</Text>
-            </TouchableOpacity>
+              <Text
+                style={{ fontSize: 28, color: '#fff', lineHeight: 32 }}
+                onPress={() => setShowNewCrop(true)}
+              >+</Text>
+            </View>
           </View>
         )}
       </Tab.Screen>
       <Tab.Screen
         name="Calendar"
-        component={CalendarScreen}
+        component={CalendarScreen as unknown as ComponentType<any>}
         options={{
           tabBarLabel: 'Calendar',
           tabBarIcon: () => <Text>📅</Text>,
@@ -215,36 +198,12 @@ export default function App() {
   const [user, setUser] = useState<User | null>(null);
   const [initializing, setInitializing] = useState(true);
 
-  // Auth listener
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, (firebaseUser) => {
       setUser(firebaseUser);
       if (initializing) setInitializing(false);
     });
     return unsub;
-  }, []);
-
-  // Setup notifications on first open
-  useEffect(() => {
-    const setupNotifications = async () => {
-      const granted = await registerForPushNotifications();
-      if (granted) {
-        await scheduleLocalNotif(
-          '🌾 Annadata Test',
-          'Notifications are working! Your daily farm reminders are set.',
-          60
-        );
-      }
-    };
-    setupNotifications();
-  }, []);
-
-  // Notification listener — handle taps
-  useEffect(() => {
-    const sub = Notifications.addNotificationResponseReceivedListener(response => {
-      console.log('Notification tapped:', response.notification.request.content.title);
-    });
-    return () => sub.remove();
   }, []);
 
   if (initializing) {
@@ -257,7 +216,7 @@ export default function App() {
 
   return (
     <NavigationContainer>
-      <Stack.Navigator screenOptions={{ headerShown: false }}>
+      <Stack.Navigator id={undefined} screenOptions={{ headerShown: false }}>
         {user ? (
           <Stack.Screen name="Main">
             {() => <TabNavigator user={user} />}
